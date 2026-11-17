@@ -1,0 +1,144 @@
+* {
+  box-sizing:border-box
+}
+body {
+  font:16px system-ui;
+  background:#f3f6fa;
+  color:#172334;
+  margin:0
+}
+main {
+  max-width:1100px;
+  margin:auto;
+  padding:24px
+}
+h1 {
+  margin-bottom:4px
+}
+section {
+  background:white;
+  border:1px solid #dce3eb;
+  border-radius:12px;
+  padding:18px;
+  margin:16px 0
+}
+button,input,textarea,select {
+  font:inherit
+}
+button {
+  background:#176b55;
+  color:white;
+  border:0;
+  border-radius:7px;
+  padding:10px 14px;
+  cursor:pointer;
+  margin:4px
+}
+button.secondary {
+  background:#475569
+}
+label {
+  display:inline-block;
+  margin:8px
+}
+canvas {
+  max-width:100%;
+  height:auto;
+  touch-action:none;
+  display:block;
+  margin:12px auto
+}
+textarea {
+  width:100%;
+  min-height:100px;
+  border:1px solid #aab6c3;
+  padding:10px;
+  border-radius:6px
+}
+.timeline {
+  display:flex;
+  overflow:auto;
+  gap:8px;
+  padding:10px 0
+}
+.event {
+  min-width:115px;
+  border:1px solid #ccd4df;
+  border-radius:8px;
+  padding:10px;
+  white-space:nowrap
+}
+.event.active {
+  outline:3px solid #176b55;
+  background:#e2f5ec
+}
+.left {
+  color:#2463b0
+}
+.right {
+  color:#168052
+}
+.keys {
+  position:relative;
+  height:150px;
+  min-width:850px;
+  display:flex
+}
+.white {
+  border:1px solid #8c99a7;
+  background:white;
+  flex:1;
+  position:relative;
+  color:#333;
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  font-size:10px;
+  padding-bottom:5px
+}
+.black {
+  position:absolute;
+  top:0;
+  height:60%;
+  background:#172334;
+  color:white;
+  border-radius:0 0 4px 4px;
+  z-index:2;
+  font-size:9px;
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  padding-bottom:4px
+}
+.keys .lh {
+  background:#4285dc;
+  color:white
+}
+.keys .rh {
+  background:#24a36f;
+  color:white
+}
+.keys .both {
+  background:#9955bd;
+  color:white
+}
+.scroll {
+  overflow:auto
+}
+.muted {
+  color:#536477;
+  font-size:14px
+}
+footer {
+  text-align:center;
+  color:#536477
+}
+#now {
+  font-size:25px;
+  font-weight:bold;
+  min-height:40px
+}
+a {
+  color:#176b55
+}
+
