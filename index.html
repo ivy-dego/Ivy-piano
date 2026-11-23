@@ -9,62 +9,128 @@
 <body>
 <main>
 <h1>Ivy Piano Trainer</h1>
-<p class="muted">Sheet music preparation and interactive practice</p>
+<p class="muted">Write or paste notes, then practice on piano or guitar</p>
+
 <section>
-<h2>1. Prepare sheet music</h2>
-<input id="file" type="file" accept="image/*,.pdf">
-<label>PDF page <input id="page" type="number" min="1" value="1" style="width:70px">
-</label>
-<button id="loadPage">Load PDF page</button>
-<p id="imageStatus" role="status">Choose a picture or PDF. Drag across the preview to select a crop.</p>
-<label>Contrast <input id="contrast" type="range" min="50" max="250" value="100">
-</label>
-<button id="rotate">Rotate 90°</button>
-<button id="crop">Apply crop</button>
-<button id="reset" class="secondary">Reset</button>
-<button id="saveImage">Download prepared PNG</button>
-<canvas id="preview" hidden>
-</canvas>
+  <h2>1. Sheet music picture (optional)</h2>
+  <p class="muted">Upload your sheet music to keep it next to your notes while you type. This step is only for looking; nothing is recognized automatically.</p>
+  <input id="file" type="file" accept="image/*,.pdf">
+  <label>PDF page <input id="page" type="number" min="1" value="1" style="width:70px"></label>
+  <button id="loadPage">Load PDF page</button>
+  <p id="imageStatus" role="status">Choose a picture or PDF. Drag across the preview to select a crop.</p>
+  <label>Contrast <input id="contrast" type="range" min="50" max="250" value="100"></label>
+  <button id="rotate">Rotate 90°</button>
+  <button id="crop">Apply crop</button>
+  <button id="reset" class="secondary">Reset</button>
+  <button id="saveImage">Download prepared PNG</button>
+  <canvas id="preview" hidden></canvas>
 </section>
+
 <section>
-<h2>2. Load recognized notes</h2>
-<p>This version does not automatically recognize notation from pictures. Use <a href="https://audiveris.github.io/audiveris/" target="_blank" rel="noopener">Audiveris</a> locally to recognize the prepared image and export uncompressed MusicXML, then import it here. Check recognition against your score.</p>
-<input id="xml" type="file" accept=".xml,.musicxml">
-<p id="xmlStatus" role="status">
-</p>
-<p>Or edit notes manually. One line is one step; format: beats | left hand | right hand. Use spaces for simultaneous notes, a dash for a rest, and octave numbers (C4 = middle C).</p>
-<textarea id="notes">1 | C3 | C4
+  <h2>2. Write or paste your notes</h2>
+  <p>One line = one step (one note, or several notes played together). Format: <code>beats | left hand | right hand</code></p>
+
+  <div class="two-col">
+    <div class="card">
+      <h3>🎹 Piano format</h3>
+      <table>
+        <tr><td><code>1 | C3 | C4</code></td><td>left C3, right C4, 1 beat</td></tr>
+        <tr><td><code>2 | - | E4</code></td><td>no left hand, E4 for 2 beats</td></tr>
+        <tr><td><code>1 | C3 E3 G3 | C4 E4 G4</code></td><td>chords: separate notes with spaces</td></tr>
+        <tr><td><code>0.5 | - | F#4</code></td><td>F sharp, half a beat</td></tr>
+        <tr><td><code>1 | - | Bb3</code></td><td>B flat</td></tr>
+        <tr><td><code>1 | - | -</code></td><td>rest (silence)</td></tr>
+      </table>
+      <ul class="small">
+        <li>Letters: C D E F G A B. <code>#</code> = sharp, <code>b</code> = flat.</li>
+        <li>The number is the octave. C4 = middle C. No number: left hand 3, right hand 4.</li>
+        <li>Beats: 1 = quarter note, 2 = half, 4 = whole, 0.5 = eighth.</li>
+        <li><code>-</code> = nothing. Lines starting with <code>#</code> are comments.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🎸 Guitar format</h3>
+      <p class="small"><b>Way A: letters</b>, same as piano. Put notes in the right column; the app chooses the frets.</p>
+      <table>
+        <tr><td><code>1 | - | E4</code></td><td>one note</td></tr>
+        <tr><td><code>2 | - | C4 E4 G4</code></td><td>notes together (chord)</td></tr>
+      </table>
+      <p class="small"><b>Way B: tab style</b>, <code>string/fret</code>. Strings: 1 = thinnest (high E) … 6 = thickest (low E). Fret 0 = open string.</p>
+      <table>
+        <tr><td><code>1 | - | 1/0</code></td><td>string 1, open</td></tr>
+        <tr><td><code>1 | - | 2/1</code></td><td>string 2, fret 1 (= C)</td></tr>
+        <tr><td><code>2 | - | 5/3 4/2 3/0 2/1 1/0</code></td><td>open C chord</td></tr>
+      </table>
+      <p class="small">Open strings (6→1): E A D G B E. The left/right columns only change the color; for guitar just use the right column.</p>
+    </div>
+  </div>
+
+  <label>Example songs
+    <select id="examples"></select>
+  </label>
+  <button id="loadExample" class="secondary">Load example</button>
+
+  <div class="two-col">
+    <div>
+      <h3>Your sheet music</h3>
+      <img id="refImage" alt="Your sheet music" hidden>
+      <p id="refEmpty" class="muted">If you uploaded a picture in step 1, it appears here.</p>
+    </div>
+    <div>
+      <h3>Your notes (editable)</h3>
+      <textarea id="notes" spellcheck="false">1 | C3 | C4
 1 | G3 | D4
 1 | C3 E3 | E4
 2 | G3 | G4
 1 | - | F#4
 1 | C3 | C4 E4 G4</textarea>
-<button id="apply">Load practice notes</button>
+      <p id="notesStatus" role="status"></p>
+      <h3>Letters preview</h3>
+      <div id="letters" class="chips"></div>
+      <button id="apply">Load practice notes</button>
+    </div>
+  </div>
 </section>
+
 <section>
-<h2>3. Practice</h2>
-<label>Tempo (BPM) <input id="bpm" type="number" min="20" max="300" value="80" style="width:80px">
-</label>
-<label>Speed <input id="speed" type="range" min="25" max="200" value="100"><span id="speedText">100%</span>
-</label>
-<label>Countdown (seconds) <input id="count" type="number" min="0" max="60" value="3" style="width:70px">
-</label>
-<label>Hand <select id="hand"><option value="both">Both</option><option value="left">Left only</option><option value="right">Right only</option></select>
-</label>
-<button id="play">Play / Resume</button>
-<button id="pause" class="secondary">Pause</button>
-<button id="stop" class="secondary">Reset playback</button>
-<div id="now" role="status">Ready</div>
-<div id="timeline" class="timeline">
-</div>
-<p><span class="left">Blue: left hand</span> · <span class="right">Green: right hand</span> · Purple: both</p>
-<div class="scroll">
-<div id="keys" class="keys">
-</div>
-</div>
-<p class="muted">Low notes ← C4 (middle C) → High notes. Visual playback only.</p>
+  <h2>3. Practice</h2>
+  <label>Instrument
+    <select id="instrument">
+      <option value="piano">Piano</option>
+      <option value="guitar">Guitar</option>
+    </select>
+  </label>
+  <label><input id="sound" type="checkbox" checked> Sound</label>
+  <label>Tempo (BPM) <input id="bpm" type="number" min="20" max="300" value="80" style="width:80px"></label>
+  <label>Speed <input id="speed" type="range" min="25" max="200" value="100"><span id="speedText">100%</span></label>
+  <label>Countdown (seconds) <input id="count" type="number" min="0" max="60" value="3" style="width:70px"></label>
+  <label>Hand
+    <select id="hand">
+      <option value="both">Both</option>
+      <option value="left">Left only</option>
+      <option value="right">Right only</option>
+    </select>
+  </label>
+  <button id="play">Play / Resume</button>
+  <button id="pause" class="secondary">Pause</button>
+  <button id="stop" class="secondary">Reset playback</button>
+  <p id="soundStatus" class="muted" role="status"></p>
+  <div id="now" role="status">Ready</div>
+  <div id="timeline" class="timeline"></div>
+  <p><span class="left">Blue: left hand</span> · <span class="right">Green: right hand</span> · Purple: both</p>
+
+  <div id="pianoView" class="scroll">
+    <div id="keys" class="keys"></div>
+    <p class="muted">Low notes ← C4 (middle C) → High notes.</p>
+  </div>
+
+  <div id="guitarView" class="scroll" hidden>
+    <svg id="fretboard" role="img" aria-label="Guitar fretboard"></svg>
+    <p class="muted">Standard tuning (E A D G B E), top line = high E. Numbers are frets.</p>
+  </div>
 </section>
-<footer>Version 1.0 prototype · Files processed locally in your browser · PDF library downloaded from a CDN</footer>
+
+<footer>Version 1.2 · Notes stay in your browser · Sound samples and the PDF library are downloaded from a CDN</footer>
 </main>
 <script type="module" src="./script.js"></script>
 </body>

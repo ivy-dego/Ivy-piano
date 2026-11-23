@@ -1,1275 +1,613 @@
+/* Ivy Piano Trainer v1.2 */
+const $ = id => document.getElementById(id);
+const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const SEMI = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const HAND_COLOR = { left: '#4285dc', right: '#24a36f', both: '#9955bd' };
+const midiName = m => NAMES[m % 12] + (Math.floor(m / 12) - 1);
+const midiLetter = m => NAMES[m % 12];
+const fmtBeats = b => String(Math.round(b * 1000) / 1000);
 
-/* =========================================================
-   IVY PIANO TRAINER
-   Version 1.0 Prototype
-   ========================================================= */
+/* guitar constants (used by the parser too) */
+const OPEN = [64, 59, 55, 50, 45, 40];   // string 1 (high E) ... string 6 (low E)
+const STRING_NAMES = ['E', 'B', 'G', 'D', 'A', 'E'];
+const FRETS = 17;
 
-// Get HTML elements by ID
-const $ = (id) => document.getElementById(id);
+/* =====================  1. PICTURE (optional reference)  ===================== */
+const preview = $('preview');
+const pctx = preview.getContext('2d');
+let original = null, base = null, sel = null, drag = null, pdfData = null, pdfDoc = null;
 
-/* =========================================================
-   1. IMAGE AND PDF VARIABLES
-   ========================================================= */
+const imageStatus = t => { $('imageStatus').textContent = t; };
+function makeCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+function copyCanvas(src) { const c = makeCanvas(src.width, src.height); c.getContext('2d').drawImage(src, 0, 0); return c; }
 
-let original = null;
-let base = null;
-let pdf = null;
-let selection = null;
-let start = null;
-let rotation = 0;
-
-const cv = $("preview");
-const ctx = cv.getContext("2d");
-
-/* =========================================================
-   2. IMAGE PROCESSING
-   ========================================================= */
-
-// Create a copy of a canvas
-function clone(canvas) {
-    const copy = document.createElement("canvas");
-
-    copy.width = canvas.width;
-    copy.height = canvas.height;
-
-    copy.getContext("2d").drawImage(canvas, 0, 0);
-
-    return copy;
+function applyContrast(ctx, w, h) {
+  const f = +$('contrast').value / 100;
+  if (f === 1) return;
+  const img = ctx.getImageData(0, 0, w, h), d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    d[i] = (d[i] - 128) * f + 128;
+    d[i + 1] = (d[i + 1] - 128) * f + 128;
+    d[i + 2] = (d[i + 2] - 128) * f + 128;
+  }
+  ctx.putImageData(img, 0, 0);
 }
-
-// Render image with rotation and contrast
+function renderOut() {
+  const c = makeCanvas(base.width, base.height), x = c.getContext('2d');
+  x.drawImage(base, 0, 0);
+  applyContrast(x, c.width, c.height);
+  return c;
+}
 function render() {
-    if (!base) return;
+  if (!base) return;
+  preview.width = base.width; preview.height = base.height;
+  pctx.drawImage(base, 0, 0);
+  applyContrast(pctx, base.width, base.height);
+  if (sel && sel.w > 0 && sel.h > 0) {
+    pctx.save();
+    pctx.fillStyle = 'rgba(23,107,85,0.18)';
+    pctx.strokeStyle = '#176b55';
+    pctx.lineWidth = Math.max(2, base.width / 400);
+    pctx.fillRect(sel.x, sel.y, sel.w, sel.h);
+    pctx.strokeRect(sel.x, sel.y, sel.w, sel.h);
+    pctx.restore();
+  }
+}
+function updateRef() {
+  if (!base) return;
+  $('refImage').src = renderOut().toDataURL('image/jpeg', 0.85);
+  $('refImage').hidden = false;
+  $('refEmpty').hidden = true;
+}
+function setBase(c) { base = c; sel = null; preview.hidden = false; render(); updateRef(); }
+function setOriginal(c) { original = copyCanvas(c); setBase(c); }
 
-    cv.hidden = false;
-
-    cv.width = rotation % 180
-        ? base.height
-        : base.width;
-
-    cv.height = rotation % 180
-        ? base.width
-        : base.height;
-
-    ctx.fillStyle = "white";
-    ctx.fillRect(0, 0, cv.width, cv.height);
-
-    ctx.save();
-
-    ctx.translate(cv.width / 2, cv.height / 2);
-
-    ctx.rotate(rotation * Math.PI / 180);
-
-    ctx.filter = `contrast(${$("contrast").value}%)`;
-
-    ctx.drawImage(
-        base,
-        -base.width / 2,
-        -base.height / 2
-    );
-
-    ctx.restore();
-
-    // Draw crop selection
-    if (selection) {
-        ctx.strokeStyle = "#168052";
-        ctx.lineWidth = 3;
-        ctx.strokeRect(...selection);
-    }
+function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 3000 / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = makeCanvas(Math.round(img.naturalWidth * k), Math.round(img.naturalHeight * k));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read this image.')); };
+    img.src = url;
+  });
 }
 
-// Set a new image
-function setImage(canvas) {
-    original = clone(canvas);
-    base = clone(canvas);
-
-    rotation = 0;
-    selection = null;
-
-    $("contrast").value = 100;
-
-    render();
+const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/';
+async function loadPdfPage() {
+  if (!pdfData) { imageStatus('Choose a PDF first.'); return; }
+  imageStatus('Loading PDF…');
+  if (!pdfDoc) {
+    const pdfjs = await import(PDFJS + 'pdf.min.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.mjs';
+    pdfDoc = await pdfjs.getDocument({ data: pdfData.slice(0) }).promise;
+  }
+  const n = Math.min(Math.max(1, +$('page').value || 1), pdfDoc.numPages);
+  $('page').value = n; $('page').max = pdfDoc.numPages;
+  const pg = await pdfDoc.getPage(n);
+  const vp = pg.getViewport({ scale: 2 });
+  const c = makeCanvas(Math.round(vp.width), Math.round(vp.height));
+  await pg.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+  setOriginal(c);
+  imageStatus(`PDF page ${n} of ${pdfDoc.numPages} loaded. Drag on the preview to select a crop.`);
 }
 
-/* =========================================================
-   3. PDF PROCESSING
-   ========================================================= */
-
-async function pdfPage() {
-    if (!pdf) return;
-
-    const pageNumber = Math.max(
-        1,
-        Math.min(
-            pdf.numPages,
-            Number($("page").value) || 1
-        )
-    );
-
-    $("page").value = pageNumber;
-
-    const page = await pdf.getPage(pageNumber);
-
-    const viewport = page.getViewport({
-        scale: 2
-    });
-
-    const canvas = document.createElement("canvas");
-
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-
-    await page.render({
-        canvasContext: canvas.getContext("2d"),
-        viewport: viewport,
-        background: "white"
-    }).promise;
-
-    setImage(canvas);
-
-    $("imageStatus").textContent =
-        `PDF has ${pdf.numPages} pages. ` +
-        `Showing page ${pageNumber}. Drag to crop.`;
-}
-
-/* =========================================================
-   4. FILE UPLOAD
-   ========================================================= */
-
-$("file").onchange = async () => {
-    try {
-        const file = $("file").files[0];
-
-        if (!file) return;
-
-        pdf = null;
-
-        $("imageStatus").textContent =
-            "Loading file...";
-
-        // PDF upload
-        if (file.name.toLowerCase().endsWith(".pdf")) {
-
-            const pdfjs = await import(
-                "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs"
-            );
-
-            pdfjs.GlobalWorkerOptions.workerSrc =
-                "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.mjs";
-
-            pdf = await pdfjs.getDocument({
-                data: await file.arrayBuffer(),
-                isEvalSupported: false
-            }).promise;
-
-            $("page").value = 1;
-            $("page").max = pdf.numPages;
-
-            await pdfPage();
-
-        } else {
-
-            // Image upload
-            const image = await createImageBitmap(file);
-
-            const canvas =
-                document.createElement("canvas");
-
-            // Limit very large images
-            const scale = Math.min(
-                1,
-                Math.sqrt(
-                    12000000 /
-                    (image.width * image.height)
-                )
-            );
-
-            canvas.width = Math.max(
-                1,
-                Math.round(image.width * scale)
-            );
-
-            canvas.height = Math.max(
-                1,
-                Math.round(image.height * scale)
-            );
-
-            const context = canvas.getContext("2d");
-
-            context.fillStyle = "white";
-
-            context.fillRect(
-                0,
-                0,
-                canvas.width,
-                canvas.height
-            );
-
-            context.drawImage(
-                image,
-                0,
-                0,
-                canvas.width,
-                canvas.height
-            );
-
-            image.close();
-
-            setImage(canvas);
-
-            $("imageStatus").textContent =
-                "Image loaded. Drag across the image to crop.";
-        }
-
-    } catch (error) {
-        console.error(error);
-
-        $("imageStatus").textContent =
-            "Error loading file: " + error.message;
-    }
-};
-
-// Load selected PDF page
-$("loadPage").onclick = () => {
-    pdfPage().catch((error) => {
-        $("imageStatus").textContent = error.message;
-    });
-};
-
-/* =========================================================
-   5. CONTRAST, ROTATION AND RESET
-   ========================================================= */
-
-$("contrast").oninput = render;
-
-$("rotate").onclick = () => {
-    if (!base) return;
-
-    rotation = (rotation + 90) % 360;
-
-    selection = null;
-
-    render();
-};
-
-$("reset").onclick = () => {
-    if (original) {
-        setImage(original);
-    }
-};
-
-/* =========================================================
-   6. CROP SELECTION
-   ========================================================= */
-
-function point(event) {
-    const rect = cv.getBoundingClientRect();
-
-    const x =
-        (event.clientX - rect.left) *
-        cv.width / rect.width;
-
-    const y =
-        (event.clientY - rect.top) *
-        cv.height / rect.height;
-
-    return [
-        Math.max(0, Math.min(cv.width, x)),
-        Math.max(0, Math.min(cv.height, y))
-    ];
-}
-
-cv.onpointerdown = (event) => {
-    if (!base) return;
-
-    start = point(event);
-
-    cv.setPointerCapture(event.pointerId);
-};
-
-cv.onpointermove = (event) => {
-    if (!start) return;
-
-    const [x, y] = point(event);
-
-    selection = [
-        Math.min(x, start[0]),
-        Math.min(y, start[1]),
-        Math.abs(x - start[0]),
-        Math.abs(y - start[1])
-    ];
-
-    render();
-};
-
-cv.onpointerup = () => {
-    start = null;
-};
-
-cv.onpointercancel = () => {
-    start = null;
-};
-
-// Apply selected crop
-$("crop").onclick = () => {
-
-    if (
-        !selection ||
-        selection[2] < 2 ||
-        selection[3] < 2
-    ) {
-        $("imageStatus").textContent =
-            "Select an area before cropping.";
-
-        return;
-    }
-
-    const region = selection;
-
-    selection = null;
-
-    const contrast = $("contrast").value;
-
-    // Avoid applying contrast twice
-    $("contrast").value = 100;
-
-    render();
-
-    const canvas = document.createElement("canvas");
-
-    canvas.width = Math.round(region[2]);
-    canvas.height = Math.round(region[3]);
-
-    canvas.getContext("2d").drawImage(
-        cv,
-        ...region,
-        0,
-        0,
-        canvas.width,
-        canvas.height
-    );
-
-    base = canvas;
-
-    rotation = 0;
-
-    $("contrast").value = contrast;
-
-    render();
-
-    $("imageStatus").textContent =
-        "Image cropped successfully.";
-};
-
-/* =========================================================
-   7. DOWNLOAD PREPARED IMAGE
-   ========================================================= */
-
-$("saveImage").onclick = () => {
-    if (!base) return;
-
-    const savedSelection = selection;
-
-    selection = null;
-
-    render();
-
-    const link = document.createElement("a");
-
-    link.download = "prepared-score.png";
-    link.href = cv.toDataURL("image/png");
-
-    link.click();
-
-    selection = savedSelection;
-
-    render();
-};
-
-/* =========================================================
-   8. MUSICAL NOTES AND MIDI NUMBERS
-   ========================================================= */
-
-const names = [
-    "C",
-    "C#",
-    "D",
-    "D#",
-    "E",
-    "F",
-    "F#",
-    "G",
-    "G#",
-    "A",
-    "A#",
-    "B"
-];
-
-// Convert a note such as C4 into a MIDI number
-function midi(note) {
-
-    const match =
-        /^([A-G])([#b]?)(-?\d+)$/.exec(note);
-
-    if (!match) return NaN;
-
-    const letter = match[1];
-    const accidental = match[2];
-    const octave = Number(match[3]);
-
-    let adjustment = 0;
-
-    if (accidental === "#") adjustment = 1;
-    if (accidental === "b") adjustment = -1;
-
-    return (
-        (octave + 1) * 12 +
-        names.indexOf(letter) +
-        adjustment
-    );
-}
-
-// Convert MIDI number into a note name
-function name(number) {
-    return (
-        names[number % 12] +
-        (Math.floor(number / 12) - 1)
-    );
-}
-
-/* =========================================================
-   9. CREATE THE 88-KEY PIANO
-   ========================================================= */
-
-const map = new Map();
-const whites = [];
-
-$("keys").replaceChildren();
-
-// Standard piano range: A0 to C8
-for (let number = 21; number <= 108; number++) {
-
-    if (!name(number).includes("#")) {
-        whites.push(number);
-    }
-}
-
-// Create white piano keys
-for (const number of whites) {
-
-    const key = document.createElement("div");
-
-    key.className = "white";
-
-    key.textContent = name(number);
-
-    $("keys").append(key);
-
-    map.set(number, key);
-}
-
-// Create black piano keys
-for (let number = 21; number <= 108; number++) {
-
-    if (!name(number).includes("#")) continue;
-
-    const key = document.createElement("div");
-
-    key.className = "black";
-
-    key.style.width =
-        `${100 / 52 * 0.62}%`;
-
-    key.style.left =
-        `${(
-            whites.indexOf(number - 1) +
-            1 - 0.31
-        ) * 100 / 52}%`;
-
-    key.textContent = name(number);
-
-    $("keys").append(key);
-
-    map.set(number, key);
-}
-
-/* =========================================================
-   10. PLAYBACK VARIABLES
-   ========================================================= */
-
-let events = [];
-let index = 0;
-let timer = null;
-let running = false;
-let remaining = 0;
-let last = 0;
-let countdown = 0;
-let playbackStarted = false;
-
-// Stop the playback interval
-function stop() {
-
-    running = false;
-
-    clearInterval(timer);
-
-    timer = null;
-}
-
-// Remove all active piano key colors
-function clearKeys() {
-
-    for (const key of map.values()) {
-
-        key.classList.remove(
-            "lh",
-            "rh",
-            "both"
-        );
-    }
-}
-
-/* =========================================================
-   11. DISPLAY NOTES AND HIGHLIGHT PIANO KEYS
-   ========================================================= */
-
-function show() {
-
-    const event = events[index];
-
-    clearKeys();
-
-    const timelineItems =
-        [...$("timeline").children];
-
-    for (const [position, element]
-        of timelineItems.entries()) {
-
-        element.classList.toggle(
-            "active",
-            position === index
-        );
-    }
-
-    if (!event) return;
-
-    const selectedHand = $("hand").value;
-
-    const left =
-        selectedHand === "right"
-            ? []
-            : event.l;
-
-    const right =
-        selectedHand === "left"
-            ? []
-            : event.r;
-
-    // Highlight left hand notes
-    for (const note of left) {
-
-        const key = map.get(midi(note));
-
-        if (key) key.classList.add("lh");
-    }
-
-    // Highlight right hand notes
-    for (const note of right) {
-
-        const key = map.get(midi(note));
-
-        if (!key) continue;
-
-        if (key.classList.contains("lh")) {
-
-            key.classList.remove("lh");
-
-            key.classList.add("both");
-
-        } else {
-
-            key.classList.add("rh");
-        }
-    }
-
-    $("now").textContent =
-        `Left: ${left.join(" ") || "—"}     ` +
-        `Right: ${right.join(" ") || "—"}`;
-
-    // Scroll the current note into view
-    const activeItem =
-        $("timeline").children[index];
-
-    if (activeItem) {
-
-        activeItem.scrollIntoView({
-            block: "nearest",
-            inline: "center"
-        });
-    }
-}
-
-/* =========================================================
-   12. CREATE THE NOTE TIMELINE
-   ========================================================= */
-
-function createTimeline() {
-
-    $("timeline").replaceChildren();
-
-    for (const [position, event]
-        of events.entries()) {
-
-        const card = document.createElement("div");
-
-        card.className = "event";
-
-        const left = document.createElement("div");
-
-        left.className = "left";
-
-        left.textContent =
-            event.l.join(" ") || "—";
-
-        const right = document.createElement("div");
-
-        right.className = "right";
-
-        right.textContent =
-            event.r.join(" ") || "—";
-
-        const duration =
-            document.createElement("div");
-
-        duration.className = "muted";
-
-        duration.textContent =
-            event.b + " beats";
-
-        card.append(left, right, duration);
-
-        // Click a note to practice from that position
-        card.style.cursor = "pointer";
-
-        card.onclick = () => {
-
-            stop();
-
-            index = position;
-
-            remaining = events[index].b;
-
-            countdown = 0;
-
-            playbackStarted = false;
-
-            show();
-        };
-
-        $("timeline").append(card);
-    }
-}
-
-/* =========================================================
-   13. LOAD MANUALLY ENTERED NOTES
-   Format: beats | left hand | right hand
-   ========================================================= */
-
-function load() {
-
-    try {
-
-        const lines = $("notes").value
-            .trim()
-            .split(/\n/)
-            .filter(line => line.trim());
-
-        const next = lines.map(line => {
-
-            const [beats, left, right, ...extra] =
-                line.split("|");
-
-            if (
-                left === undefined ||
-                right === undefined ||
-                extra.length ||
-                !Number.isFinite(Number(beats)) ||
-                !(Number(beats) > 0)
-            ) {
-
-                throw new Error(
-                    "Invalid line: " + line
-                );
-            }
-
-            function parseNotes(text) {
-
-                return text
-                    .trim()
-                    .split(/\s+/)
-                    .filter(note =>
-                        note !== "-" && note !== ""
-                    );
-            }
-
-            const event = {
-                b: Number(beats),
-                l: parseNotes(left),
-                r: parseNotes(right)
-            };
-
-            const allNotes = [
-                ...event.l,
-                ...event.r
-            ];
-
-            for (const note of allNotes) {
-
-                const number = midi(note);
-
-                if (
-                    !Number.isFinite(number) ||
-                    number < 21 ||
-                    number > 108
-                ) {
-
-                    throw new Error(
-                        "Invalid piano note: " + note
-                    );
-                }
-            }
-
-            return event;
-        });
-
-        if (!next.length) {
-            throw new Error("No notes entered.");
-        }
-
-        stop();
-
-        events = next;
-
-        index = 0;
-
-        remaining = events[0].b;
-
-        countdown = 0;
-
-        playbackStarted = false;
-
-        createTimeline();
-
-        show();
-
-        $("xmlStatus").textContent =
-            `Loaded ${events.length} practice steps.`;
-
-    } catch (error) {
-
-        console.error(error);
-
-        $("xmlStatus").textContent =
-            error.message;
-    }
-}
-
-// Load practice notes button
-$("apply").onclick = load;
-
-/* =========================================================
-   14. PLAYBACK SPEED AND HAND SELECTION
-   ========================================================= */
-
-$("speed").oninput = () => {
-
-    $("speedText").textContent =
-        $("speed").value + "%";
-};
-
-$("hand").onchange = () => {
-
-    if (countdown <= 0) {
-        show();
-    }
-};
-
-/* =========================================================
-   15. PLAY AND COUNTDOWN
-   ========================================================= */
-
-$("play").onclick = () => {
-
-    if (running || !events.length) return;
-
-    // Restart after finishing
-    if (index >= events.length) {
-
-        index = 0;
-
-        remaining = events[0].b;
-
-        playbackStarted = false;
-    }
-
-    // Start a new countdown
-    if (!playbackStarted) {
-
-        countdown = Math.max(
-            0,
-            Math.min(
-                60,
-                Number($("count").value) || 0
-            )
-        );
-
-        playbackStarted = true;
-    }
-
-    running = true;
-
-    last = performance.now();
-
-    if (countdown > 0) {
-
-        clearKeys();
-
-        $("now").textContent =
-            "Starting in " + Math.ceil(countdown);
-
+$('file').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    pdfData = null; pdfDoc = null;
+    if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) {
+      pdfData = await f.arrayBuffer();
+      await loadPdfPage();
     } else {
-
-        show();
+      setOriginal(await loadImageFile(f));
+      imageStatus('Image loaded. Drag on the preview to select a crop.');
     }
+  } catch (err) { imageStatus('Error: ' + err.message); }
+});
+$('loadPage').addEventListener('click', () => loadPdfPage().catch(err => imageStatus('Error: ' + err.message)));
+$('contrast').addEventListener('input', render);
+$('contrast').addEventListener('change', updateRef);
 
-    timer = setInterval(() => {
+$('rotate').addEventListener('click', () => {
+  if (!base) return;
+  const c = makeCanvas(base.height, base.width), x = c.getContext('2d');
+  x.translate(c.width, 0); x.rotate(Math.PI / 2); x.drawImage(base, 0, 0);
+  setBase(c);
+});
+$('crop').addEventListener('click', () => {
+  if (!base) return;
+  if (!sel || sel.w < 5 || sel.h < 5) { imageStatus('Drag across the preview first to select an area.'); return; }
+  const x = Math.round(sel.x), y = Math.round(sel.y), w = Math.round(sel.w), h = Math.round(sel.h);
+  const c = makeCanvas(w, h);
+  c.getContext('2d').drawImage(base, x, y, w, h, 0, 0, w, h);
+  setBase(c);
+  imageStatus('Crop applied.');
+});
+$('reset').addEventListener('click', () => {
+  if (!original) return;
+  $('contrast').value = 100;
+  setBase(copyCanvas(original));
+  imageStatus('Reset to original.');
+});
+$('saveImage').addEventListener('click', () => {
+  if (!base) { imageStatus('Load an image first.'); return; }
+  renderOut().toBlob(b => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = 'prepared-sheet-music.png'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }, 'image/png');
+});
 
-        const now = performance.now();
+function canvasPoint(e) {
+  const r = preview.getBoundingClientRect();
+  return {
+    x: Math.min(Math.max((e.clientX - r.left) * preview.width / r.width, 0), preview.width),
+    y: Math.min(Math.max((e.clientY - r.top) * preview.height / r.height, 0), preview.height)
+  };
+}
+preview.addEventListener('pointerdown', e => { drag = canvasPoint(e); preview.setPointerCapture(e.pointerId); });
+preview.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const p = canvasPoint(e);
+  sel = { x: Math.min(drag.x, p.x), y: Math.min(drag.y, p.y), w: Math.abs(p.x - drag.x), h: Math.abs(p.y - drag.y) };
+  render();
+});
+preview.addEventListener('pointerup', () => { drag = null; });
 
-        const elapsed = (now - last) / 1000;
+/* =====================  2. NOTES EDITOR  ===================== */
+let steps = [];   // [{beats, left:[midi], right:[midi], tabs:{midi:{string,fret}}}]
 
-        last = now;
-
-        // Countdown
-        if (countdown > 0) {
-
-            countdown = Math.max(
-                0,
-                countdown - elapsed
-            );
-
-            $("now").textContent =
-                countdown > 0
-                    ? "Starting in " +
-                        Math.ceil(countdown)
-                    : "Go!";
-
-            if (countdown === 0) {
-                show();
-            }
-
-            return;
-        }
-
-        // Read tempo and speed dynamically
-        const bpm = Math.max(
-            20,
-            Math.min(
-                300,
-                Number($("bpm").value) || 80
-            )
-        );
-
-        const speed =
-            Number($("speed").value) / 100;
-
-        // Convert elapsed seconds into musical beats
-        remaining -=
-            elapsed * bpm / 60 * speed;
-
-        // Move to the next musical event
-        while (remaining <= 0) {
-
-            index++;
-
-            // End of music
-            if (index >= events.length) {
-
-                stop();
-
-                clearKeys();
-
-                playbackStarted = false;
-
-                $("now").textContent =
-                    "Finished!";
-
-                return;
-            }
-
-            remaining += events[index].b;
-
-            show();
-        }
-
-    }, 30);
-};
-
-/* =========================================================
-   16. PAUSE AND RESET PLAYBACK
-   ========================================================= */
-
-$("pause").onclick = () => {
-
-    stop();
-
-    $("now").textContent = "Paused";
-};
-
-$("stop").onclick = () => {
-
-    stop();
-
-    index = 0;
-
-    remaining = events[0]?.b || 0;
-
-    countdown = 0;
-
-    playbackStarted = false;
-
-    clearKeys();
-
-    if (events.length) {
-
-        show();
-
-    } else {
-
-        $("now").textContent = "Ready";
+function parseBeats(s) {
+  if (s.includes('/')) { const [a, b] = s.split('/').map(Number); return a / b; }
+  return Number(s);
+}
+function parseNoteToken(tok, defOct) {
+  const m = /^([A-Ga-g])([#b]?)(-?\d)?$/.exec(tok);
+  if (!m) return null;
+  const oct = m[3] !== undefined ? +m[3] : defOct;
+  const alter = m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0;
+  return 12 * (oct + 1) + SEMI[m[1].toUpperCase()] + alter;
+}
+function parseHand(str, defOct, lineNo, errors, tabs) {
+  const out = [];
+  if (!str || str === '-') return out;
+  for (const tok of str.split(/\s+/)) {
+    if (tok === '-') continue;
+    const t = /^([1-6])\/(\d{1,2})$/.exec(tok);          // guitar tab style: string/fret
+    if (t) {
+      const s = +t[1] - 1, f = +t[2];
+      if (f > FRETS) { errors.push(`Line ${lineNo}: fret ${f} is too high (max ${FRETS})`); continue; }
+      const m = OPEN[s] + f;
+      if (!out.includes(m)) out.push(m);
+      tabs[m] = { string: s, fret: f };
+      continue;
     }
+    const m = parseNoteToken(tok, defOct);
+    if (m === null || m < 21 || m > 108) errors.push(`Line ${lineNo}: "${tok}" is not a valid note (letters C–B, # or b, octave number; or string/fret like 2/1)`);
+    else if (!out.includes(m)) out.push(m);
+  }
+  return out.sort((a, b) => a - b);
+}
+function parseText(text) {
+  const result = [], errors = [];
+  text.split(/\r?\n/).forEach((raw, i) => {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) return;
+    const p = line.split('|').map(s => s.trim());
+    if (p.length !== 3) { errors.push(`Line ${i + 1}: use  beats | left hand | right hand`); return; }
+    const beats = parseBeats(p[0]);
+    if (!(beats > 0)) { errors.push(`Line ${i + 1}: beats must be a number above 0`); return; }
+    const tabs = {};
+    const left = parseHand(p[1], 3, i + 1, errors, tabs);
+    const right = parseHand(p[2], 4, i + 1, errors, tabs);
+    result.push({ beats, left, right, tabs });
+  });
+  return { steps: result, errors };
+}
+
+function renderLetters(list, activeIndex = -1) {
+  const box = $('letters');
+  box.innerHTML = '';
+  list.forEach((s, i) => {
+    const all = [...new Set([...s.left, ...s.right])].sort((a, b) => a - b);
+    const d = document.createElement('span');
+    d.className = 'chip' + (i === activeIndex ? ' active' : '');
+    d.textContent = all.length ? all.map(midiLetter).join(' ') : '–';
+    d.title = `Step ${i + 1}: ${fmtBeats(s.beats)} beat(s)`;
+    box.appendChild(d);
+  });
+}
+let typingTimer = null;
+function checkEditor() {
+  const { steps: s, errors } = parseText($('notes').value);
+  const st = $('notesStatus');
+  if (errors.length) { st.className = 'err'; st.textContent = errors.slice(0, 6).join('\n'); }
+  else { st.className = 'ok'; st.textContent = `${s.length} steps look good. Press "Load practice notes" to use them.`; renderLetters(s); }
+}
+$('notes').addEventListener('input', () => { clearTimeout(typingTimer); typingTimer = setTimeout(checkEditor, 250); });
+
+$('apply').addEventListener('click', () => {
+  const { steps: s, errors } = parseText($('notes').value);
+  const st = $('notesStatus');
+  if (errors.length) { st.className = 'err'; st.textContent = errors.slice(0, 6).join('\n'); return; }
+  if (!s.length) { st.className = 'err'; st.textContent = 'There are no notes to load.'; return; }
+  steps = s;
+  stopPlayback();
+  buildTimeline();
+  renderLetters(steps);
+  st.className = 'ok';
+  st.textContent = `${steps.length} steps loaded. Scroll down to practice.`;
+  setNow('Ready');
+});
+
+/* ---- Example songs ---- */
+const EXAMPLES = {
+  yahweh: {
+    name: 'Yahweh – simple original melody (piano)',
+    instrument: 'piano',
+    text: `# Yahweh - simple original melody in C major, 4/4
+1 | C3 G3 | E4
+1 | - | G4
+2 | - | C5
+1 | A2 E3 | A4
+1 | - | G4
+2 | - | E4
+1 | F2 C3 | F4
+1 | - | A4
+2 | - | C5
+1 | G2 D3 | B4
+1 | - | A4
+2 | - | G4
+1 | C3 G3 | E4
+1 | - | G4
+1 | - | C5
+1 | - | D5
+2 | F2 C3 | E5
+1 | - | C5
+1 | - | A4
+1 | G2 D3 | B4
+1 | - | A4
+2 | - | G4
+4 | C3 G3 | C5`
+  },
+  ode: {
+    name: 'Ode to Joy – melody (guitar, letters)',
+    instrument: 'guitar',
+    text: `# Ode to Joy (Beethoven, public domain) - letters, guitar
+1 | - | E4
+1 | - | E4
+1 | - | F4
+1 | - | G4
+1 | - | G4
+1 | - | F4
+1 | - | E4
+1 | - | D4
+1 | - | C4
+1 | - | C4
+1 | - | D4
+1 | - | E4
+1.5 | - | E4
+0.5 | - | D4
+2 | - | D4`
+  },
+  twinkle: {
+    name: 'Twinkle Twinkle – guitar tab style (string/fret)',
+    instrument: 'guitar',
+    text: `# Twinkle Twinkle (public domain) - tab style string/fret
+1 | - | 2/1
+1 | - | 2/1
+1 | - | 1/3
+1 | - | 1/3
+1 | - | 1/5
+1 | - | 1/5
+2 | - | 1/3
+1 | - | 1/1
+1 | - | 1/1
+1 | - | 1/0
+1 | - | 1/0
+1 | - | 2/3
+1 | - | 2/3
+2 | - | 2/1`
+  }
 };
+Object.entries(EXAMPLES).forEach(([key, ex]) => {
+  const o = document.createElement('option'); o.value = key; o.textContent = ex.name;
+  $('examples').appendChild(o);
+});
+$('loadExample').addEventListener('click', () => {
+  const ex = EXAMPLES[$('examples').value];
+  $('notes').value = ex.text;
+  $('instrument').value = ex.instrument;
+  updateInstrumentView();
+  checkEditor();
+  $('apply').click();
+});
 
-/* =========================================================
-   17. IMPORT MUSICXML
-   ========================================================= */
+/* =====================  3. PRACTICE  ===================== */
+/* ---- Piano keys ---- */
+const keyEls = new Map();
+const isBlack = m => [1, 3, 6, 8, 10].includes(m % 12);
+function buildKeys() {
+  const box = $('keys'); box.innerHTML = '';
+  const whites = []; for (let m = 21; m <= 108; m++) if (!isBlack(m)) whites.push(m);
+  const w = 100 / whites.length;
+  whites.forEach(m => {
+    const d = document.createElement('div');
+    d.className = 'white';
+    if (m % 12 === 0) d.textContent = 'C' + (m / 12 - 1);
+    box.appendChild(d); keyEls.set(m, d);
+  });
+  let whiteCount = 0;
+  for (let m = 21; m <= 108; m++) {
+    if (!isBlack(m)) { whiteCount++; continue; }
+    const d = document.createElement('div');
+    d.className = 'black';
+    d.style.left = (whiteCount * w - w * 0.3) + '%';
+    d.style.width = (w * 0.6) + '%';
+    box.appendChild(d); keyEls.set(m, d);
+  }
+}
+function clearKeys() { keyEls.forEach(el => el.classList.remove('lh', 'rh', 'both')); }
+function showKeys(left, right) {
+  clearKeys();
+  left.forEach(m => keyEls.get(m)?.classList.add('lh'));
+  right.forEach(m => {
+    const el = keyEls.get(m); if (!el) return;
+    el.classList.remove('lh'); el.classList.add(left.includes(m) ? 'both' : 'rh');
+  });
+}
 
-$("xml").onchange = async () => {
+/* ---- Guitar fretboard ---- */
+const FW = 52, SG = 30, LEFT = 44, TOP = 22;
+const NS = 'http://www.w3.org/2000/svg';
+let dotsGroup = null;
+function svgEl(name, attrs, text) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function buildFretboard() {
+  const svg = $('fretboard'), W = LEFT + FRETS * FW + 20, H = TOP + 5 * SG + 46;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = '';
+  svg.appendChild(svgEl('rect', { x: LEFT, y: TOP - 8, width: FRETS * FW, height: 5 * SG + 16, fill: '#e9d8b8', rx: 4 }));
+  for (let f = 0; f <= FRETS; f++)
+    svg.appendChild(svgEl('line', { x1: LEFT + f * FW, y1: TOP - 8, x2: LEFT + f * FW, y2: TOP + 5 * SG + 8, stroke: f === 0 ? '#172334' : '#8c99a7', 'stroke-width': f === 0 ? 5 : 2 }));
+  for (let s = 0; s < 6; s++) {
+    svg.appendChild(svgEl('line', { x1: LEFT, y1: TOP + s * SG, x2: LEFT + FRETS * FW, y2: TOP + s * SG, stroke: '#555', 'stroke-width': 1 + s * 0.4 }));
+    svg.appendChild(svgEl('text', { x: 14, y: TOP + s * SG + 5, 'font-size': 14, fill: '#536477', 'text-anchor': 'middle' }, `${s + 1} ${STRING_NAMES[s]}`));
+  }
+  for (let f = 1; f <= FRETS; f++) {
+    svg.appendChild(svgEl('text', { x: LEFT + (f - 0.5) * FW, y: H - 22, 'font-size': 12, fill: '#536477', 'text-anchor': 'middle' }, f));
+    if ([3, 5, 7, 9, 12, 15, 17].includes(f))
+      svg.appendChild(svgEl('circle', { cx: LEFT + (f - 0.5) * FW, cy: H - 8, r: 3, fill: '#aab6c3' }));
+  }
+  dotsGroup = svgEl('g', {});
+  svg.appendChild(dotsGroup);
+}
+const GUITAR_LOW = OPEN[5], GUITAR_HIGH = OPEN[0] + FRETS;
+function guitarPositions(notes, usedInit = new Set()) {   // notes: [{midi, hand}]
+  const used = new Set(usedInit), out = [];
+  [...notes].sort((a, b) => b.midi - a.midi).forEach(n => {
+    let m = n.midi;
+    while (m < GUITAR_LOW) m += 12;
+    while (m > GUITAR_HIGH) m -= 12;
+    let best = null;
+    OPEN.forEach((open, s) => {
+      const fret = m - open;
+      if (fret < 0 || fret > FRETS) return;
+      const penalty = (used.has(s) ? 100 : 0) + fret;
+      if (!best || penalty < best.penalty) best = { s, fret, penalty };
+    });
+    if (!best) return;
+    used.add(best.s);
+    out.push({ midi: m, string: best.s, fret: best.fret, hand: n.hand });
+  });
+  return out;
+}
+function showGuitar(positions) {
+  dotsGroup.innerHTML = '';
+  positions.forEach(p => {
+    const x = p.fret === 0 ? LEFT - 18 : LEFT + (p.fret - 0.5) * FW, y = TOP + p.string * SG;
+    dotsGroup.appendChild(svgEl('circle', { cx: x, cy: y, r: 12, fill: HAND_COLOR[p.hand] }));
+    dotsGroup.appendChild(svgEl('text', { x, y: y + 4, 'font-size': 11, 'font-weight': 700, fill: '#fff', 'text-anchor': 'middle' }, midiLetter(p.midi)));
+  });
+}
 
+/* ---- Sound: real samples (smplr) with synth fallback ---- */
+const SMPLR_URL = 'https://unpkg.com/smplr@0.16.4/dist/index.mjs';
+let audio = null, smplr = null;
+const bank = {}, loadingBank = {};
+const setSoundStatus = t => { $('soundStatus').textContent = t; };
+
+function ensureAudio() {
+  if (!audio) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) audio = new AC(); }
+  if (audio && audio.state === 'suspended') audio.resume();
+}
+function loadInstrument(kind) {
+  if (bank[kind]) return Promise.resolve(bank[kind]);
+  if (loadingBank[kind]) return loadingBank[kind];
+  loadingBank[kind] = (async () => {
     try {
-
-        const file = $("xml").files[0];
-
-        if (!file) return;
-
-        $("xmlStatus").textContent =
-            "Reading MusicXML...";
-
-        const content = await file.text();
-
-        const doc = new DOMParser().parseFromString(
-            content,
-            "application/xml"
-        );
-
-        if (
-            doc.querySelector("parsererror") ||
-            doc.documentElement.localName !==
-                "score-partwise"
-        ) {
-
-            throw new Error(
-                "Use an uncompressed score-partwise " +
-                "MusicXML file."
-            );
-        }
-
-        const parts = [
-            ...doc.querySelectorAll(
-                "score-partwise > part"
-            )
-        ];
-
-        if (
-            !parts.length ||
-            parts.length > 2
-        ) {
-
-            throw new Error(
-                "Only one piano part or " +
-                "two separate hand parts are supported."
-            );
-        }
-
-        const spans = [];
-
-        let end = 0;
-
-        /* Read each musical part */
-
-        for (const [partIndex, part]
-            of parts.entries()) {
-
-            let divisions = 1;
-            let clock = 0;
-
-            const measures = [...part.children]
-                .filter(element =>
-                    element.localName === "measure"
-                );
-
-            /* Read each measure */
-
-            for (const measure of measures) {
-
-                let position = clock;
-                let maximum = clock;
-                let previous = clock;
-
-                for (const element
-                    of measure.children) {
-
-                    const tag = element.localName;
-
-                    const value = selector =>
-                        element.querySelector(selector)
-                            ?.textContent;
-
-                    // MusicXML timing attributes
-                    if (tag === "attributes") {
-
-                        if (value("divisions")) {
-
-                            divisions = Number(
-                                value("divisions")
-                            );
-                        }
-
-                        if (
-                            !Number.isFinite(divisions) ||
-                            !(divisions > 0)
-                        ) {
-
-                            throw new Error(
-                                "Invalid MusicXML divisions."
-                            );
-                        }
-
-                    // Move between voices
-                    } else if (
-                        tag === "backup" ||
-                        tag === "forward"
-                    ) {
-
-                        const duration =
-                            Number(value("duration")) /
-                            divisions;
-
-                        if (
-                            !Number.isFinite(duration)
-                        ) {
-
-                            throw new Error(
-                                "Invalid MusicXML duration."
-                            );
-                        }
-
-                        position +=
-                            tag === "backup"
-                                ? -duration
-                                : duration;
-
-                        maximum = Math.max(
-                            maximum,
-                            position
-                        );
-
-                    // Read musical notes
-                    } else if (tag === "note") {
-
-                        // Grace notes are not supported
-                        if (
-                            element.querySelector("grace")
-                        ) {
-                            continue;
-                        }
-
-                        const duration =
-                            Number(value("duration")) /
-                            divisions;
-
-                        if (
-                            !Number.isFinite(duration) ||
-                            !(duration > 0)
-                        ) continue;
-
-                        const chord = Boolean(
-                            element.querySelector("chord")
-                        );
-
-                        const at =
-                            chord ? previous : position;
-
-                        if (!chord) {
-
-                            previous = position;
-
-                            position += duration;
-                        }
-
-                        maximum = Math.max(
-                            maximum,
-                            at + duration,
-                            position
-                        );
-
-                        // Skip rests
-                        if (
-                            !element.querySelector("pitch")
-                        ) continue;
-
-                        const step =
-                            value("pitch > step");
-
-                        const octave =
-                            value("pitch > octave");
-
-                        const alter = Number(
-                            value("pitch > alter") || 0
-                        );
-
-                        if (
-                            ![-1, 0, 1].includes(alter)
-                        ) {
-
-                            throw new Error(
-                                "Double accidentals and " +
-                                "microtones are not supported."
-                            );
-                        }
-
-                        let accidental = "";
-
-                        if (alter === 1) {
-                            accidental = "#";
-                        }
-
-                        if (alter === -1) {
-                            accidental = "b";
-                        }
-
-                        const note =
-                            step + accidental + octave;
-
-                        // Determine left or right hand
-                        let hand;
-
-                        if (parts.length === 2) {
-
-                            hand =
-                                partIndex === 0
-                                    ? "r"
-                                    : "l";
-
-                        } else {
-
-                            hand =
-                                value("staff") === "2"
-                                    ? "l"
-                                    : "r";
-                        }
-
-                        spans.push({
-                            at: at,
-                            to: at + duration,
-                            n: note,
-                            hand: hand
-                        });
-                    }
-                }
-
-                clock = maximum;
-            }
-
-            end = Math.max(end, clock);
-        }
-
-        /* =================================================
-           18. CONVERT MUSICXML INTO PRACTICE EVENTS
-           ================================================= */
-
-        const times = [
-            ...new Set(
-                [
-                    0,
-                    end,
-                    ...spans.flatMap(span => [
-                        span.at,
-                        span.to
-                    ])
-                ].map(number =>
-                    Math.round(number * 1000000) /
-                    1000000
-                )
-            )
-        ].sort((a, b) => a - b);
-
-        const lines = times
-            .slice(0, -1)
-            .map((time, position) => {
-
-                function activeNotes(hand) {
-
-                    const notes = spans
-                        .filter(span =>
-                            span.hand === hand &&
-                            span.at <= time + 0.0000005 &&
-                            span.to > time + 0.0000005
-                        )
-                        .map(span => span.n);
-
-                    return (
-                        [...new Set(notes)].join(" ") ||
-                        "-"
-                    );
-                }
-
-                const duration = Number(
-                    (
-                        times[position + 1] - time
-                    ).toFixed(6)
-                );
-
-                return (
-                    `${duration} | ` +
-                    `${activeNotes("l")} | ` +
-                    `${activeNotes("r")}`
-                );
-            });
-
-        $("notes").value = lines.join("\n");
-
-        load();
-
-    } catch (error) {
-
-        console.error(error);
-
-        $("xmlStatus").textContent =
-            "MusicXML error: " + error.message;
+      ensureAudio();
+      setSoundStatus(`Loading real ${kind} sound… (needs internet, a few seconds)`);
+      if (!smplr) smplr = await import(SMPLR_URL);
+      const inst = kind === 'piano'
+        ? new smplr.SplendidGrandPiano(audio)
+        : new smplr.Soundfont(audio, { instrument: 'acoustic_guitar_nylon' });
+      await inst.load;
+      bank[kind] = inst;
+      setSoundStatus(`Real ${kind} sound ready.`);
+    } catch (err) {
+      bank[kind] = 'fail';
+      setSoundStatus('Real sounds could not be loaded (check internet). Using simple synth tones.');
     }
-};
+    return bank[kind];
+  })();
+  return loadingBank[kind];
+}
+function synth(midi, dur, kind, delay) {
+  const t = audio.currentTime + delay, f = 440 * Math.pow(2, (midi - 69) / 12);
+  const o = audio.createOscillator(), g = audio.createGain();
+  let len;
+  g.gain.setValueAtTime(0.0001, t);
+  if (kind === 'guitar') {
+    o.type = 'sawtooth';
+    const lp = audio.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(Math.min(f * 7, 6000), t);
+    lp.frequency.exponentialRampToValueAtTime(Math.max(f * 1.5, 250), t + 0.6);
+    o.connect(lp); lp.connect(g);
+    len = Math.min(Math.max(dur, 0.4) * 1.2, 2.5);
+    g.gain.linearRampToValueAtTime(0.16, t + 0.005);
+  } else {
+    o.type = 'triangle'; o.connect(g);
+    len = Math.min(dur * 1.1 + 0.4, 3);
+    g.gain.linearRampToValueAtTime(0.22, t + 0.01);
+  }
+  g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  o.frequency.value = f;
+  g.connect(audio.destination);
+  o.start(t); o.stop(t + len + 0.05);
+}
+function tone(midi, dur, kind, delay = 0) {
+  if (!audio || !$('sound').checked) return;
+  const inst = bank[kind];
+  if (inst && inst !== 'fail') {
+    inst.start({
+      note: midi, velocity: kind === 'piano' ? 85 : 95,
+      time: audio.currentTime + delay,
+      duration: kind === 'piano' ? Math.max(dur * 1.1, 0.3) : Math.max(dur * 1.6, 0.8)
+    });
+  } else synth(midi, dur, kind, delay);
+}
 
-/* =========================================================
-   19. INITIALIZE APPLICATION
-   ========================================================= */
+/* ---- Timeline & playback ---- */
+let idx = 0, playing = false, starting = false, timer = null, countTimer = null;
+const setNow = t => { $('now').textContent = t; };
+const instrument = () => $('instrument').value;
 
-load();
+function stepNotes(i) {
+  const s = steps[i], h = $('hand').value;
+  return { left: h === 'right' ? [] : s.left, right: h === 'left' ? [] : s.right };
+}
+function stepLabel(i) {
+  const { left, right } = stepNotes(i);
+  const parts = [];
+  if (left.length) parts.push('L: ' + left.map(midiName).join(' '));
+  if (right.length) parts.push('R: ' + right.map(midiName).join(' '));
+  return parts.join('  ') || 'Rest';
+}
+function buildTimeline() {
+  const tl = $('timeline'); tl.innerHTML = '';
+  steps.forEach((s, i) => {
+    const d = document.createElement('div');
+    d.className = 'event';
+    d.textContent = `${i + 1}. ${stepLabel(i)} (${fmtBeats(s.beats)})`;
+    tl.appendChild(d);
+  });
+}
+function clearDisplay() { clearKeys(); if (dotsGroup) dotsGroup.innerHTML = ''; }
 
-console.log(
-    "Ivy Piano Trainer initialized successfully."
-);
+function showStep(i, ms) {
+  const { left, right } = stepNotes(i);
+  [...$('timeline').children].forEach((el, k) => el.classList.toggle('active', k === i));
+  $('timeline').children[i]?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  renderLetters(steps, i);
+  setNow(stepLabel(i));
+  const dur = ms / 1000;
+  if (instrument() === 'piano') {
+    showKeys(left, right);
+    [...new Set([...left, ...right])].forEach(m => tone(m, dur, 'piano'));
+  } else {
+    const all = left.map(m => ({ midi: m, hand: 'left' }));
+    right.forEach(m => {
+      const e = all.find(x => x.midi === m);
+      if (e) e.hand = 'both'; else all.push({ midi: m, hand: 'right' });
+    });
+    const tabs = steps[i].tabs || {}, fixed = [], auto = [], used = new Set();
+    all.forEach(n => {
+      const t = tabs[n.midi];
+      if (t) { fixed.push({ midi: n.midi, string: t.string, fret: t.fret, hand: n.hand }); used.add(t.string); }
+      else auto.push(n);
+    });
+    const pos = [...fixed, ...guitarPositions(auto, used)];
+    showGuitar(pos);
+    pos.sort((a, b) => b.string - a.string).forEach((p, k) => tone(p.midi, dur, 'guitar', k * 0.025)); // tiny strum
+  }
+}
+function stepMs(i) {
+  const bpm = Math.min(300, Math.max(20, +$('bpm').value || 80));
+  return steps[i].beats * 60000 / (bpm * (+$('speed').value / 100));
+}
+function tick() {
+  if (!playing) return;
+  if (idx >= steps.length) { stopPlayback(); setNow('Finished'); return; }
+  const ms = stepMs(idx);
+  showStep(idx, ms);
+  timer = setTimeout(() => { idx++; tick(); }, ms);
+}
+async function startPlayback() {
+  if (!steps.length) { setNow('Press "Load practice notes" first (step 2).'); return; }
+  if (playing || starting) return;
+  ensureAudio();
+  if ($('sound').checked) {
+    starting = true; setNow('Loading sound…');
+    await loadInstrument(instrument());
+    starting = false;
+  }
+  playing = true;
+  if (idx >= steps.length) idx = 0;
+  const cd = idx === 0 ? Math.max(0, Math.floor(+$('count').value || 0)) : 0;
+  if (cd > 0) {
+    let n = cd;
+    const run = () => {
+      if (!playing) return;
+      if (n <= 0) { tick(); return; }
+      setNow('Starting in ' + n); n--;
+      countTimer = setTimeout(run, 1000);
+    };
+    run();
+  } else tick();
+}
+function pausePlayback() {
+  playing = false;
+  clearTimeout(timer); clearTimeout(countTimer);
+  if (steps.length) setNow('Paused');
+}
+function stopPlayback() {
+  playing = false; idx = 0;
+  clearTimeout(timer); clearTimeout(countTimer);
+  clearDisplay();
+  [...$('timeline').children].forEach(el => el.classList.remove('active'));
+  if (steps.length) renderLetters(steps);
+  setNow('Ready');
+}
+function updateInstrumentView() {
+  const g = instrument() === 'guitar';
+  $('guitarView').hidden = !g;
+  $('pianoView').hidden = g;
+  clearDisplay();
+}
 
-/* =========================================================
-   END OF SCRIPT
-   ========================================================= */
+$('play').addEventListener('click', startPlayback);
+$('pause').addEventListener('click', pausePlayback);
+$('stop').addEventListener('click', stopPlayback);
+$('speed').addEventListener('input', () => { $('speedText').textContent = $('speed').value + '%'; });
+$('hand').addEventListener('change', () => { if (steps.length) buildTimeline(); });
+$('instrument').addEventListener('change', () => {
+  updateInstrumentView();
+  if ($('sound').checked) loadInstrument(instrument());   // preload samples
+});
+
+/* ---- Start ---- */
+buildKeys();
+buildFretboard();
+checkEditor();
+$('apply').click();
