@@ -1,36 +1,36 @@
 # Ivy Piano Trainer
 
-Version 1.0 prototype — a browser-based piano practice tool.
+Version 1.2 — write or paste notes, then practice on piano or guitar.
 
-## Features
+## New in 1.2
 
-- Image and PDF page upload, contrast, rotation, crop and PNG export.
-- Uncompressed score-partwise MusicXML import and manual note editing.
-- Left/right hand display, octave labels and an 88-key visual keyboard.
-- Countdown, tempo, speed, play, pause and reset.
+- No Audiveris needed: type or paste notes in a simple text format (guide built into the page).
+- Format guide for piano and guitar, plus example songs (original "Yahweh" melody,
+  Ode to Joy, Twinkle Twinkle).
+- Guitar can be written as letters or tab style `string/fret` (e.g. `2/1`).
+- Real piano (sampled grand) and nylon guitar sounds via smplr; synth fallback if offline.
+
+## Note format
+
+One line per step: `beats | left hand | right hand`
+
+- Letters C D E F G A B, `#` sharp, `b` flat, number = octave (C4 = middle C).
+- No octave: left hand 3, right hand 4. `-` = rest. Lines starting with `#` are comments.
+- Guitar tab style: `string/fret`, string 1 = high E ... 6 = low E, e.g. `1 | - | 2/1`.
 
 ## Run locally
 
-```bash
-python3 -m http.server 8000 --bind 127.0.0.1
-```
+    python3 -m http.server 8000 --bind 127.0.0.1
 
 Open http://localhost:8000 in a modern browser.
 
-## Practice workflow
-
-1. Upload and prepare sheet music; download the prepared PNG.
-2. Recognize it locally with [Audiveris](https://audiveris.github.io/audiveris/) and export uncompressed MusicXML.
-3. Import MusicXML and check the notes against the original score.
-4. Set tempo, speed, countdown and hand selection; press Play.
-
-Manual notes use one line per step: `beats | left hand | right hand`.
-For example: `1 | C3 E3 | C4`. Use `-` for rests. C4 is middle C.
-
 ## GitHub Pages
 
-Upload index.html, style.css, script.js and README.md to your repository. In Settings > Pages, choose Deploy from a branch, main, / (root), then Save.
+Upload index.html, style.css, script.js and README.md. In Settings > Pages choose
+Deploy from a branch, main, / (root), then Save.
 
 ## Privacy and limitations
 
-Files are processed locally in the browser. PDF.js is downloaded from jsDelivr when needed. Automatic image-to-note recognition is not integrated. Playback is visual, with manual tempo; complex notation, repeats and hand crossings may require corrections. No guaranteed offline support. Check imported notes before practice.
+Notes and pictures stay in your browser. Sound samples (smplr, from unpkg and a sample CDN)
+and PDF.js (jsDelivr) are downloaded when needed, so real sounds need internet.
+No automatic picture-to-notes recognition. The built-in "Yahweh" melody is original and simple.
